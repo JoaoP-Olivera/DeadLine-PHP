@@ -2,9 +2,9 @@
 require_once('db.php');
 require_once('Request.php');
 require_once('../auth/SessionJWT.php');
-//TODO: Refatorar e retirar o excesso de código (DRY)
 class UserController 
 {
+    private int $id;
     public function criarUser()
     {
         $request = new Request();
@@ -99,7 +99,34 @@ class UserController
         
        
     }
-    public function login( SessionJWT $sessionJWT):array
+    private function blockUser(array $dadosDoUsuario)
+    {
+        if($dadosDoUsuario['tentativas'] >= 3)
+        {
+            try {
+                $DB = Database::lerConexao();
+                $SQL = $DB->prepare("UPDATE usuarios SET isactive = 'N' WHERE id = :id");
+                $SQL->bindParam(':id', $dadosDoUsuario['id']);
+                $SQL->execute();
+            }
+            catch(PDOException $e)
+            {
+                $resposta = new Response();
+                $resposta->setstatusCode(500);
+                $resposta->setSucesso(false);
+                $resposta->addMensagem("Falha no servidor:".$e->getMessage()."");
+                $resposta->enviar();
+            }
+        }
+    }
+    private function allowUser(array $dados)
+    {
+        $DB = Database::lerConexao();
+        $SQL = $DB->prepare('UPDATE usuarios SET tentativas = 0 WHERE id = :id');
+        $SQL->bindParam('id',$dados['id']);
+        $SQL->execute();
+    }
+    public function login( SessionJWT $sessionJWT)
     {
         $loginRequest = new Request();
         $loginRequest->validarHttp("POST");
@@ -158,7 +185,7 @@ class UserController
             $resposta->setSucesso(false);
             $resposta->addMensagem($ex->getMessage());
             $resposta->enviar();
-            exit;
+            exit();
         }
         if($SQL->rowCount() == 0)
         {
@@ -167,7 +194,7 @@ class UserController
             $resposta->setSucesso(false);
             $resposta->addMensagem("Usuario não autorizado! Username ou senha estão incorretas");
             $resposta->enviar();
-            exit;
+            exit();
         }
         $JWT = new SessionJWT();
         $dados =  $SQL->fetch(PDO::FETCH_ASSOC);
@@ -177,19 +204,35 @@ class UserController
         $usernameUsuario = $dados['username'];
         $userEstaAtivo = $dados['isactive'];
         $tentativasLogin = $dados['tentativas'];
+        $this->blockUser($dados);
+        if($userEstaAtivo !== 'S')
+        {
+            $resposta = new Response();
+            $resposta->setstatusCode(401);
+            $resposta->setSucesso(false);
+            $resposta->addMensagem("Usuario não está ativo");
+            $resposta->enviar();
+            exit();
+        }
         if(!password_verify($senha,$senhaUsuario))
         {
+            $SQL = $DB->prepare("UPDATE usuarios SET tentativas = tentativas+1 WHERE id = :id");
+            $SQL->bindParam(':id', $id);
+            $SQL->execute();
             $resposta = new Response();
             $resposta->setstatusCode(401);
             $resposta->setSucesso(false);
             $resposta->addMensagem("Usuario não autorizado! Username ou senha estão incorretas");
             $resposta->enviar();
-            exit;
-        }
-        $JWT->criarSession($id);
-        $dadosDoJWT = $JWT->pegarSessionPeloId($id);
-        $dados['Token'] = $dadosDoJWT['Access_Id'];
-        $dados['SessionUserID'] = $dadosDoJWT['User_Id'];
+            exit();
+            die();
+        } 
+        $JWT->criarSession($dados['id']);
+        $dadosDoJWT = $JWT->pegarSessionPeloId($dados['id']);
+        $dados['SessionId'] = $dadosDoJWT['id'];
+        $this->id = $dadosDoJWT['id'];
+        $dados['Token'] = $dadosDoJWT['token'];
+        $this->allowUser($dados);
         $resposta = new Response();
         $resposta->setstatusCode(201);
         $resposta->setSucesso(true);
@@ -197,7 +240,25 @@ class UserController
         $resposta->setDados($dados);
         $resposta->enviar();
         header("Location:http://localhost/php/DeadLINE/DeadLine-PHP/App-v1/auth/SessionController.php");
-        return $dados;
+        
+    }
+    public function logout(SessionJWT $sessionJWT)
+    {
+        $id = $_GET['sessionid'];
+        $loginRequest = new Request();
+        $loginRequest->validarHttp("DELETE");
+        if(!isset($_SERVER['HTTP_AUTHORIZATION']) || strlen($_SERVER['HTTP_AUTHORIZATION']) < 1)
+        {
+            $resposta = new Response();
+            $resposta->setstatusCode(401);
+            $resposta->setSucesso(false);
+            $resposta->addMensagem("O token é necessario para prosseguir a operação");
+            $resposta->enviar();
+            exit();
+        }
+        $token = $_SERVER['HTTP_AUTHORIZATION'];
+        $deleteSession = new SessionJWT();
+        $deleteSession->deletarSession($id,$token);    
     }
 }
 

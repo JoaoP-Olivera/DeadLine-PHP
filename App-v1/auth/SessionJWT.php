@@ -15,13 +15,13 @@ class SessionJWT
 
     public function gerarToken()
     {
-        $string = random_bytes(100);
+        $string = random_bytes(24);
         return $this->accessToken = bin2hex($string);
     }
     public function regerarToken()
     {
-        $novoToken = $this->gerarToken();
-         $this->refreshToken = $novoToken;
+        
+         $this->refreshToken = $this->gerarToken();
     }
     public function criarSession(int $id)
     {
@@ -53,6 +53,7 @@ class SessionJWT
     $resposta->setDados($sessionCriada);
     $resposta->addMensagem("Sessão criada com sucesso");
     $resposta->enviar();
+    exit();
     }
     public function pegarSessionPeloId(int $id):array
     { 
@@ -63,13 +64,43 @@ class SessionJWT
         $dadosDaSession = array();
         while($linhas = $SQL->fetch(PDO::FETCH_ASSOC))
         {
-            $dadosDaSession['Access_Id'] = $linhas['accesstoken'];
-            $dadosDaSession['User_Id'] = $linhas['userid'];
+            $dadosDaSession['id'] = $linhas['userid'];
+            $dadosDaSession['token'] = $linhas['accesstoken'];
             
         }
         return $dadosDaSession;
     }
-    
+    public function deletarSession(int $id, string $token)
+    {
+        try{
+        $DB = Database::conectar();
+        $SQL = $DB->prepare("DELETE FROM tblsession WHERE id = :id AND accesstoken = :token");
+        $SQL->bindParam(':id', $id);
+        $SQL->bindParam(':token', $token);
+        $SQL->execute();
+        $sucessoDaQuery = $SQL->rowCount();
+        if($sucessoDaQuery === 0)
+        {
+            $mensagem = [
+                'Status-Code' => 401,
+                'mensagem' => 'Falha ao fazer logout'
+            ];
+            echo json_encode($mensagem);
+        }
+        }
+        catch(PDOException $e)
+        {
+            $resposta = new Response();
+            $resposta->setstatusCode(500);
+            $resposta->setSucesso(false);
+            $resposta->addMensagem("falha ao deletar o JWT".$e->getMessage()."");
+            $resposta->enviar();
+            exit();      
+        }
+        $mensagem = [
+        'mensagem'=> 'Logout com exito'
+        ];
+    } 
 }
 
 ?> 
